@@ -23,6 +23,15 @@ import logging
 import os
 import random
 
+import time
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+# import warnings filter
+from warnings import simplefilter
+# ignore all future warnings
+simplefilter(action='ignore', category=FutureWarning)
+
 import numpy as np
 import torch
 from pabee.modeling_pabee_albert import AlbertForSequenceClassificationWithPabee
@@ -223,7 +232,8 @@ def train(args, train_dataset, model, tokenizer):
                             logs[eval_key] = value
 
                     loss_scalar = (tr_loss - logging_loss) / args.logging_steps
-                    learning_rate_scalar = scheduler.get_lr()[0]
+                    # learning_rate_scalar = scheduler.get_lr()[0]
+                    learning_rate_scalar = scheduler.get_last_lr()[0]
                     logs["learning_rate"] = learning_rate_scalar
                     logs["loss"] = loss_scalar
                     logging_loss = tr_loss
@@ -262,6 +272,14 @@ def train(args, train_dataset, model, tokenizer):
 
 
 def evaluate(args, model, tokenizer, prefix="", patience=0):
+    
+    # multi-gpu eval
+    if args.n_gpu > 1 and not isinstance(model, nn.DataParallel):
+        model = nn.DataParallel(model)
+
+    if isinstance(model, nn.DataParallel):
+        model = model.module
+
     if args.model_type == "albert":
         model.albert.set_regression_threshold(args.regression_threshold)
         model.albert.set_patience(patience)
@@ -278,6 +296,9 @@ def evaluate(args, model, tokenizer, prefix="", patience=0):
     eval_outputs_dirs = (args.output_dir, args.output_dir + "-MM") if args.task_name == "mnli" else (args.output_dir,)
 
     results = {}
+
+    totalTime = 0
+
     for eval_task, eval_output_dir in zip(eval_task_names, eval_outputs_dirs):
         eval_dataset = load_and_cache_examples(args, eval_task, tokenizer, evaluate=True)
 
@@ -289,9 +310,9 @@ def evaluate(args, model, tokenizer, prefix="", patience=0):
         eval_sampler = SequentialSampler(eval_dataset)
         eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
-        # multi-gpu eval
-        if args.n_gpu > 1 and not isinstance(model, nn.DataParallel):
-            model = nn.DataParallel(model)
+        # # multi-gpu eval
+        # if args.n_gpu > 1 and not isinstance(model, nn.DataParallel):
+        #     model = nn.DataParallel(model)
 
         # Eval!
         logger.info("***** Running evaluation {} *****".format(prefix))
@@ -301,6 +322,9 @@ def evaluate(args, model, tokenizer, prefix="", patience=0):
         nb_eval_steps = 0
         preds = None
         out_label_ids = None
+
+        print("Total layers:", model.albert.config.num_hidden_layers)
+
         for batch in tqdm(eval_dataloader, desc="Evaluating"):
             model.eval()
             batch = tuple(t.to(args.device) for t in batch)
@@ -312,7 +336,12 @@ def evaluate(args, model, tokenizer, prefix="", patience=0):
                     "labels": batch[3],
                 }
                 inputs["token_type_ids"] = batch[2]
+                start = time.time()
                 outputs = model(**inputs)
+                end = time.time()
+                thisTime = end - start
+                print("{:.5f}s".format(thisTime))
+                totalTime += thisTime
                 tmp_eval_loss, logits = outputs[:2]
 
                 eval_loss += tmp_eval_loss.mean().item()
@@ -338,6 +367,7 @@ def evaluate(args, model, tokenizer, prefix="", patience=0):
             for key in sorted(result.keys()):
                 logger.info("  %s = %s", key, str(result[key]))
                 print("  %s = %s" % (key, str(result[key])))
+                print("Total time: {:.5f}s".format(totalTime))
                 writer.write("%s = %s\n" % (key, str(result[key])))
 
     if args.eval_all_checkpoints and patience != 0:

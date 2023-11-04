@@ -15,6 +15,7 @@
 """PyTorch ALBERT model with Patience-based Early Exit. """
 
 import logging
+import sys
 
 import torch
 from torch import nn
@@ -130,6 +131,10 @@ class AlbertModelWithPabee(AlbertModel):
                 heads.
         """
 
+
+        # print(self.patience)
+
+
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
@@ -178,6 +183,7 @@ class AlbertModelWithPabee(AlbertModel):
             patient_result = None
             calculated_layer_num = 0
             for i in range(self.config.num_hidden_layers):
+                # print(i, patient_counter, patient_result)
                 calculated_layer_num += 1
                 encoder_outputs = self.encoder.adaptive_forward(
                     encoder_outputs,
@@ -212,6 +218,10 @@ class AlbertModelWithPabee(AlbertModel):
             self.inference_layers_num += calculated_layer_num
             self.inference_instances_num += 1
 
+            # print(calculated_layer_num)
+        
+
+        # sys.exit()
         return res
 
 
